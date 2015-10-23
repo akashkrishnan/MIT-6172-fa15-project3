@@ -57,11 +57,13 @@ static int add_range(const malloc_impl_t* impl, range_t** ranges, char* lo,
   if (!IS_ALIGNED(lo)) {
     printf("Payload address (lo=%p) is not %d-byte aligned.\n", lo, R_ALIGNMENT);
     malloc_error(tracenum, 0, "[ERROR] payload misalignment");
+    return 0;
   }
 
   // The payload must lie within the extent of the heap
   if (lo < (char*)mem_heap_lo() || hi > (char*)mem_heap_hi()) {
     malloc_error(tracenum, 0, "[ERROR] payload not in heap");
+    return 0;
   }
 
   // The payload must not overlap any other payloads
@@ -72,6 +74,7 @@ static int add_range(const malloc_impl_t* impl, range_t** ranges, char* lo,
       printf("Payload (%p - %p) overlaps existing payload (%p - %p).\n",
              lo, hi, p->lo, p->hi);
       malloc_error(tracenum, 0, "[ERROR] payload overlap");
+      return 0;
     }
     p = p->next;
   }
@@ -170,8 +173,8 @@ int eval_mm_valid(const malloc_impl_t *impl, trace_t *trace, int tracenum) {
 
         // Fill the allocated region with some unique data that you can check
         // for if the region is copied via realloc.
-        for (uint8_t j = 0; j < size; j++) {
-          p[j] = j;
+        for (int j = 0; j < size; j++) {
+          p[j] = (uint8_t)j;
         }
 
         // Remember region
@@ -201,13 +204,14 @@ int eval_mm_valid(const malloc_impl_t *impl, trace_t *trace, int tracenum) {
         oldsize = trace->block_sizes[index];
         if (size < oldsize)
           oldsize = size;
-        for (uint8_t j = 0; j < size; j++) {
+        for (int j = 0; j < size; j++) {
           if (j < oldsize) {
-            if ((uint8_t)newp[j] != j) {
-              malloc_error(tracenum, i, "[ERROR] realloc incorrect"); 
+            if ((uint8_t)newp[j] != (uint8_t)j) {
+              malloc_error(tracenum, i, "[ERROR] realloc incorrect");
+              return 0;
             } 
           } else {
-            newp[j] = j;
+            newp[j] = (uint8_t)j;
           }
         }
 
