@@ -76,11 +76,12 @@ inline static unsigned int BLOCK_POW(unsigned int v) {
 }
 
 typedef struct Block {
-  unsigned int bin : 7;  // The bin that this block is in
-  unsigned int free : 1; // Whether or not this block is free
-  struct Block* next;    // Pointer to next Block
+  int bin : 7;        // The bin that this block is in
+  int free : 1;       // Whether or not this block is free
+  struct Block* next; // Pointer to next Block
 } Block;
 
+Block* last;
 Block* bins[NUM_BINS];
 
 int my_check() {
@@ -98,7 +99,7 @@ int my_init() {
   return 0;
 }
 
-inline static void push(Block* block, unsigned int bin) {
+inline static void push(Block* block, int bin) {
   assert(block->bin < NUM_BINS);
   block->bin = bin;
   block->free = 1;
@@ -106,18 +107,22 @@ inline static void push(Block* block, unsigned int bin) {
   bins[bin] = block;
 }
 
-inline static void chunk(void* ptr, unsigned int h, unsigned int l) {
-  while(h > l) {
+inline static void chunk(void* ptr, int h, int l) {
+  unsigned int updateLast = (Block*)ptr == last;
+  while(h >= l) {
     push((Block*)ptr, h);
     ptr += BLOCK_SIZE(h--);
+  }
+  if (updateLast) {
+    last = ptr - BLOCK_SIZE(l);
   }
 }
 
 void* my_malloc(size_t size) {
-  void* p;
+  void* ptr;
 
   // Determine smallest block size
-  unsigned int b = BLOCK_BIN(HEADER_SIZE + size);
+  int b = BLOCK_BIN(HEADER_SIZE + size);
 
   assert(b >= 0);
   assert(b < NUM_BINS);
@@ -125,34 +130,35 @@ void* my_malloc(size_t size) {
   // Check appropriate bins for free block
   for (int i = b; i < NUM_BINS; i++) {
     if (bins[i]) {
-      p = bins[i];
-      bins[i]->free = 0;
+      ptr = bins[i];
 
       // Check if we need to shrink and chunk
       if (i > b) {
         bins[i]->bin = b;
-        chunk((void*)bins[i] + BLOCK_SIZE(b), i - 1, b - 1);
+        chunk(ptr + BLOCK_SIZE(b), i - 1, b);
       }
-
+      bins[i]->free = 0;
       bins[i] = bins[i]->next;
 
-      return p + HEADER_SIZE;
+      return ptr + HEADER_SIZE;
     }
   }
 
   // Expand heap by block size
-  p = mem_sbrk(BLOCK_SIZE(b));
+  ptr = mem_sbrk(BLOCK_SIZE(b));
 
   // Return NULL on failure
-  if (p == (void*)-1) return NULL;
+  if (ptr == (void*)-1) return NULL;
 
   // Initialize block
-  Block* block = p;
+  Block* block = ptr;
   block->bin = b;
   block->free = 0;
   block->next = NULL;
 
-  return p + HEADER_SIZE;
+  last = block;
+
+  return ptr + HEADER_SIZE;
 }
 
 void my_free(void* ptr) {
@@ -175,9 +181,7 @@ void* my_realloc(void* ptr, size_t size) {
     return NULL;
   }
 
-  //printf("realloc\n");
-
-  unsigned int b = BLOCK_BIN(HEADER_SIZE + size);
+  int b = BLOCK_BIN(HEADER_SIZE + size);
   Block* block = BLOCK(ptr);
 
   // No change
@@ -185,11 +189,19 @@ void* my_realloc(void* ptr, size_t size) {
 
   // Shrink & chunk
   if (b < block->bin) {
-    // TODO: shrink & chunk
+    chunk((void*)block + BLOCK_SIZE(b), block->bin - 1, b);
+    block->bin = b;
     return ptr;
   }
 
-  // Expand via malloc
+  // Expand
+  if (block == last) {
+    mem_sbrk(block->bin << (b - block->bin));
+    block->bin = b;
+    return ptr;
+  }
+
+  // Move
   void* ptr_new = my_malloc(size);
 
   if (!ptr_new) return NULL;
