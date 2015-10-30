@@ -98,6 +98,21 @@ int my_init() {
   return 0;
 }
 
+inline static void push(Block* block, unsigned int bin) {
+  assert(block->bin < NUM_BINS);
+  block->bin = bin;
+  block->free = 1;
+  block->next = bins[bin];
+  bins[bin] = block;
+}
+
+inline static void chunk(void* ptr, unsigned int h, unsigned int l) {
+  while(h > l) {
+    push((Block*)ptr, h);
+    ptr += BLOCK_SIZE(h--);
+  }
+}
+
 void* my_malloc(size_t size) {
   void* p;
 
@@ -105,25 +120,28 @@ void* my_malloc(size_t size) {
   unsigned int b = BLOCK_BIN(HEADER_SIZE + size);
 
   assert(b >= 0);
+  assert(b < NUM_BINS);
 
-  //printf("Allocating block for data size %d.\n", size);
+  // Check appropriate bins for free block
+  for (int i = b; i < NUM_BINS; i++) {
+    if (bins[i]) {
+      p = bins[i];
+      bins[i]->free = 0;
 
-  // Check appropriate bin for free block
-  if (bins[b]) {
-    //printf("Reusing block of size %d at %p.\n", BLOCK_SIZE(b), bins[b] + HEADER_SIZE);
-    p = bins[b];
-    bins[b]->free = 0;
-    bins[b] = bins[b]->next;
-    return p + HEADER_SIZE;
+      // Check if we need to shrink and chunk
+      if (i > b) {
+        bins[i]->bin = b;
+        chunk((void*)bins[i] + BLOCK_SIZE(b), i - 1, b - 1);
+      }
+
+      bins[i] = bins[i]->next;
+
+      return p + HEADER_SIZE;
+    }
   }
 
-  // TODO: check bins[block_pow+1]...bins[MAX_BLOCK_POW]
-
   // Expand heap by block size
-  //printf("Expanding heap by size %d.\n", BLOCK_SIZE(b));
   p = mem_sbrk(BLOCK_SIZE(b));
-
-  // TODO: add necessary free blocks until we're aligned with the cache line
 
   // Return NULL on failure
   if (p == (void*)-1) return NULL;
@@ -140,22 +158,11 @@ void* my_malloc(size_t size) {
 void my_free(void* ptr) {
   if (!ptr) return;
 
-  //printf("Freeing %p.\n", ptr);
-
   // Get block associated with pointer
   Block* block = BLOCK(ptr);
-
-  // Get bin associated with block
-  //printf("Freeing block in bin %u.\n", block->bin);
-  assert(block->bin < NUM_BINS);
-  Block* bin = BIN(block);
   
   // Put block in bin
-  block->free = 1;
-  block->next = bin;
-  BIN(block) = block;
-
-  return;
+  push(block, block->bin);
 }
 
 void* my_realloc(void* ptr, size_t size) {
