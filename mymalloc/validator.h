@@ -56,13 +56,13 @@ static int add_range(const malloc_impl_t* impl, range_t** ranges, char* lo,
   // Payload addresses must be R_ALIGNMENT-byte aligned
   if (!IS_ALIGNED(lo)) {
     printf("Payload address (lo=%p) is not %d-byte aligned.\n", lo, R_ALIGNMENT);
-    malloc_error(tracenum, 0, "[ERROR] payload misalignment");
+    malloc_error(tracenum, 0, "payload misalignment");
     return 0;
   }
 
   // The payload must lie within the extent of the heap
   if (lo < (char*)mem_heap_lo() || hi > (char*)mem_heap_hi()) {
-    malloc_error(tracenum, 0, "[ERROR] payload not in heap");
+    malloc_error(tracenum, 0, "payload not in heap");
     return 0;
   }
 
@@ -73,7 +73,7 @@ static int add_range(const malloc_impl_t* impl, range_t** ranges, char* lo,
         (p->lo <= lo && p->hi >= lo)) {
       printf("Payload (%p - %p) overlaps existing payload (%p - %p).\n",
              lo, hi, p->lo, p->hi);
-      malloc_error(tracenum, 0, "[ERROR] payload overlap");
+      malloc_error(tracenum, 0, "payload overlap");
       return 0;
     }
     p = p->next;
@@ -207,7 +207,7 @@ int eval_mm_valid(const malloc_impl_t *impl, trace_t *trace, int tracenum) {
         for (int j = 0; j < size; j++) {
           if (j < oldsize) {
             if ((uint8_t)newp[j] != (uint8_t)j) {
-              malloc_error(tracenum, i, "[ERROR] realloc incorrect");
+              malloc_error(tracenum, i, "realloc incorrect");
               return 0;
             } 
           } else {

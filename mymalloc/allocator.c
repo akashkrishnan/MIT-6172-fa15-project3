@@ -44,99 +44,169 @@
 // The smallest aligned size that will hold a size_t value.
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
-#define BLOCK_SIZE 40960
+#define CACHE_LINE_SIZE 64
+#define CACHE_ALIGN(size) (((size) + (CACHE_LINE_SIZE-1)) & ~(CACHE_LINE_SIZE-1))
 
-typedef struct FreeNode {
-  struct FreeNode* next;
-} FreeNode;
+#define HEADER_SIZE (sizeof(Block))
 
-FreeNode* free_list;
+#define MIN_BLOCK_POW 5
+#define MAX_BLOCK_POW 27
 
-// check - This checks our invariant that the size_t header before every
-// block points to either the beginning of the next block, or the end of the
-// heap.
+#define NUM_BINS (MAX_BLOCK_POW - MIN_BLOCK_POW)
+#define MIN_BLOCK_SIZE (1 << MIN_BLOCK_POW)
+#define MAX_BLOCK_SIZE (1 << MAX_BLOCK_POW)
+#define BLOCK_SIZE(bin) (1 << ((bin) + MIN_BLOCK_POW))
+#define BLOCK_BIN(size) (BLOCK_POW(size) - MIN_BLOCK_POW)
+#define BLOCK(ptr) ((Block*)((char*)ptr - HEADER_SIZE))
+#define BIN(block) (bins[block->bin])
+
+const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
+const unsigned int S[] = {1, 2, 4, 8, 16};
+
+inline static unsigned int BLOCK_POW(unsigned int v) {
+  v--;
+  register unsigned int r = 0;
+  for (int i = 4; i >= 0; i--) {
+    if (v & b[i]) {
+      v >>= S[i];
+      r |= S[i];
+    }
+  }
+  return r + 1;
+}
+
+typedef struct Block {
+  unsigned int bin;   // The bin that this block is in
+  unsigned int free;  // Whether or not this block is free
+  struct Block* next; // Pointer to next Block
+} Block;
+
+Block* bins[NUM_BINS];
+
 int my_check() {
-  char *p;
-  char *lo = (char*)mem_heap_lo();
-  char *hi = (char*)mem_heap_hi() + 1;
-  size_t size = 0;
-
-  p = lo;
-  while (lo <= p && p < hi) {
-    size = ALIGN(*(size_t*)p + SIZE_T_SIZE);
-    p += size;
-  }
-
-  if (p != hi) {
-    printf("Bad headers did not end at heap_hi!\n");
-    printf("heap_lo: %p, heap_hi: %p, size: %lu, p: %p\n", lo, hi, size, p);
-    return -1;
-  }
-
   return 0;
 }
 
-// init - Initialize the malloc package.  Called once before any other
-// calls are made.  Since this is a very simple implementation, we just
-// return success.
 int my_init() {
-  free_list = NULL;
+  // Empty bins
+  memset(bins, 0, NUM_BINS * sizeof(Block*));
+
+  // Align brk with the cache line
+  void* brk = mem_heap_hi() + 1;
+  mem_sbrk(CACHE_ALIGN((uint64_t)brk) - (uint64_t)brk);
+
   return 0;
 }
 
-//  malloc - Allocate a block by incrementing the brk pointer.
-//  Always allocate a block whose size is a multiple of the alignment.
 void* my_malloc(size_t size) {
-  assert(size <= BLOCK_SIZE);
-  //if (size > BLOCK_SIZE) return NULL;
-
   void* p;
 
-  if (free_list) {
-    p = free_list;
-    free_list = free_list->next;
-    return p;
-  }
-    
-  p = mem_sbrk(BLOCK_SIZE);
+  // Determine smallest block size
+  unsigned int b = BLOCK_BIN(HEADER_SIZE + size);
 
-  if (p == (void*)-1) {
-    return NULL;
-  } else {
-    return p;
+  assert(b >= 0);
+
+  //printf("Allocating block for data size %d.\n", size);
+
+  // Check appropriate bin for free block
+  if (bins[b]) {
+    //printf("Reusing block of size %d at %p.\n", BLOCK_SIZE(b), bins[b] + HEADER_SIZE);
+    p = bins[b];
+    bins[b]->free = 0;
+    bins[b] = bins[b]->next;
+    return p + HEADER_SIZE;
   }
+
+  // TODO: check bins[block_pow+1]...bins[MAX_BLOCK_POW]
+
+  // Expand heap by block size
+  //printf("Expanding heap by size %d.\n", BLOCK_SIZE(b));
+  p = mem_sbrk(BLOCK_SIZE(b));
+
+  // TODO: add necessary free blocks until we're aligned with the cache line
+
+  // Return NULL on failure
+  if (p == (void*)-1) return NULL;
+
+  // Initialize block
+  Block* block = p;
+  block->bin = b;
+  block->free = 0;
+  block->next = NULL;
+
+  return p + HEADER_SIZE;
 }
 
-// free - Freeing a block does nothing.
-void my_free(void* p) {
-  FreeNode* fn = p;
-  fn->next = free_list;
-  free_list = fn;
+void my_free(void* ptr) {
+  if (!ptr) return;
+
+  //printf("Freeing %p.\n", ptr);
+
+  // Get block associated with pointer
+  Block* block = BLOCK(ptr);
+
+  // Get bin associated with block
+  //printf("Freeing block in bin %u.\n", block->bin);
+  assert(block->bin < NUM_BINS);
+  Block* bin = BIN(block);
+  
+  // Put block in bin
+  block->free = 1;
+  block->next = bin;
+  BIN(block) = block;
+
+  return;
 }
 
-// realloc - Implemented simply in terms of malloc and free
-void* my_realloc(void* p, size_t size) {
-  if (!p) {
-    return my_malloc(size);
-  }
+void* my_realloc(void* ptr, size_t size) {
+  // malloc
+  if (!ptr) return my_malloc(size);
+
+  // free
   if (!size) {
-    my_free(p);
+    my_free(ptr);
     return NULL;
   }
-  return p;
+
+  //printf("realloc\n");
+
+  unsigned int b = BLOCK_BIN(HEADER_SIZE + size);
+  Block* block = BLOCK(ptr);
+
+  // No change
+  if (b == block->bin) return ptr;
+
+  // Shrink & chunk
+  if (b < block->bin) {
+    // TODO: shrink & chunk
+    return ptr;
+  }
+
+  // Expand via malloc
+  void* ptr_new = my_malloc(size);
+
+  if (!ptr_new) return NULL;
+
+  // Copy original data
+  Block* block_new = ptr_new;
+  memcpy(block_new, block, BLOCK_SIZE(block->bin));
+  block_new->bin = b;
+
+  // Free old block
+  my_free(ptr);
+
+  return ptr_new + HEADER_SIZE;
 }
 
-// call mem_reset_brk.
 void my_reset_brk() {
   mem_reset_brk();
 }
 
-// call mem_heap_lo
-void * my_heap_lo() {
+void* my_heap_lo() {
   return mem_heap_lo();
 }
 
-// call mem_heap_hi
-void * my_heap_hi() {
+void* my_heap_hi() {
   return mem_heap_hi();
 }
+
