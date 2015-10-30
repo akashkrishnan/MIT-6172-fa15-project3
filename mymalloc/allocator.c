@@ -76,9 +76,9 @@ inline static unsigned int BLOCK_POW(unsigned int v) {
 }
 
 typedef struct Block {
-  unsigned int bin;   // The bin that this block is in
-  unsigned int free;  // Whether or not this block is free
-  struct Block* next; // Pointer to next Block
+  unsigned int bin : 7;  // The bin that this block is in
+  unsigned int free : 1; // Whether or not this block is free
+  struct Block* next;    // Pointer to next Block
 } Block;
 
 Block* bins[NUM_BINS];
