@@ -53,35 +53,19 @@
 #define MAX_BLOCK_POW 27
 
 #define NUM_BINS (MAX_BLOCK_POW - MIN_BLOCK_POW)
-#define MIN_BLOCK_SIZE (1 << MIN_BLOCK_POW)
-#define MAX_BLOCK_SIZE (1 << MAX_BLOCK_POW)
 #define BLOCK_SIZE(bin) (1 << ((bin) + MIN_BLOCK_POW))
-#define BLOCK_BIN(size) (BLOCK_POW(size) - MIN_BLOCK_POW)
 #define BLOCK(ptr) ((Block*)((char*)ptr - HEADER_SIZE))
+#define DATA(ptr) ((void*)((char*)ptr + HEADER_SIZE))
 #define BIN(block) (bins[block->bin])
-
-const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
-const unsigned int S[] = {1, 2, 4, 8, 16};
-
-inline static unsigned int BLOCK_POW(unsigned int v) {
-  v--;
-  register unsigned int r = 0;
-  for (int i = 4; i >= 0; i--) {
-    if (v & b[i]) {
-      v >>= S[i];
-      r |= S[i];
-    }
-  }
-  return r + 1;
-}
+#define LEFT(block) ((Block*)((char*)block - (block - 1)->size))
+#define RIGHT(block) ((Block*)((char*)block + block->size))
 
 typedef struct Block {
-  int bin : 7;        // The bin that this block is in
-  int free : 1;       // Whether or not this block is free
-  struct Block* next; // Pointer to next Block
+  unsigned int size : 31; // The bin that this block is in
+  unsigned int free : 1;  // Whether or not this block is free
+  struct Block* next;     // Pointer to next Block
 } Block;
 
-Block* last;
 Block* bins[NUM_BINS];
 
 int my_check() {
@@ -99,76 +83,219 @@ int my_init() {
   return 0;
 }
 
-inline static void push(Block* block, int bin) {
-  assert(block->bin < NUM_BINS);
-  block->bin = bin;
-  block->free = 1;
-  block->next = bins[bin];
-  bins[bin] = block;
+const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
+const unsigned int S[] = {1, 2, 4, 8, 16};
+
+inline static unsigned int BLOCK_BIN(unsigned int v) {
+  v >>= MIN_BLOCK_POW;
+  register unsigned int r = 0;
+  for (int i = 4; i >= 0; i--) {
+    if (v & b[i]) {
+      v >>= S[i];
+      r |= S[i];
+    }
+  }
+
+  assert(r >= 0);
+  assert(r < NUM_BINS);
+
+  return r;
 }
 
-inline static void chunk(void* ptr, int h, int l) {
-  unsigned int updateLast = (Block*)ptr == last;
-  while(h >= l) {
-    push((Block*)ptr, h);
-    ptr += BLOCK_SIZE(h--);
+inline static void setFree(Block* block, unsigned int free) {
+  assert(block);
+
+  // Set the header
+  block->free = free;
+
+  // Set the foooter
+  (RIGHT(block) - 1)->free = free;
+
+  return;
+}
+
+inline static void push(Block* block) {
+  assert(block);
+
+  setFree(block, 1);
+
+  unsigned int size = block->size;
+  unsigned int bin = BLOCK_BIN(size);
+
+  Block* curr = bins[bin];
+
+  // Check if bin is empty
+  if (!curr || size <= curr->size) {
+    block->next = curr;
+    bins[bin] = block;
+    return;
   }
-  if (updateLast) {
-    last = ptr - BLOCK_SIZE(l);
+
+  // Check remaining blocks
+  Block* next;
+  while ((next = curr->next)) {
+    if (size <= next->size) {
+      block->next = next;
+      curr->next = block;
+      return;
+    }
+    curr = next;
   }
+
+  // Add to end
+  block->next = NULL;
+  curr->next = block;
+
+  return;
+}
+
+inline static Block* pull(unsigned int size, unsigned int bin) {
+  assert(bin >= 0);
+  assert(bin < NUM_BINS);
+
+  Block* curr = bins[bin];
+
+  // Check if bin is empty
+  if (!curr) return NULL;
+
+  // Check first block
+  if (curr->size >= size) {
+    bins[bin] = curr->next;
+    setFree(curr, 0);
+    return curr;
+  }
+
+  // Check remaining blocks
+  Block* next;
+  while ((next = curr->next)) {
+    if (next->size >= size) {
+      curr->next = next->next;
+      setFree(next, 0);
+      return next;
+    }
+  }
+
+  return NULL;
+}
+
+inline static void extract(Block* block) {
+  assert(block);
+
+  unsigned int size = block->size;
+  unsigned int bin = BLOCK_BIN(size);
+
+  Block* curr = bins[bin];
+
+  // Check if bin is empty
+  if (!curr) return;
+
+  // Check first block
+  if (curr == block) {
+    bins[bin] = curr->next;
+    return;
+  }
+
+  // Check remaining blocks
+  Block* next;
+  while ((next = curr->next)) {
+    if (next == block) {
+      curr->next = next->next;
+      return;
+    }
+    curr = next;
+  }
+
+  return;
+}
+
+inline static void coalesce(Block* block) {
+  assert(block);
+
+  // Try to merge right into block
+  Block* right = RIGHT(block);
+  if (right->free) {
+    // Remove from bin
+    extract(right);
+
+    // Expand block
+    block->size += right->size;
+  }
+
+  // Try to merge block into left
+  Block* left = LEFT(block);
+  if (left->free) {
+    // Remove from bin
+    extract(left);
+
+    // Expand left
+    left->size += block->size;
+
+    // Push left into bin
+    push(left);
+  } else {
+    push(block);
+  }
+
+  return;
+}
+
+inline static void shrink(Block* block, unsigned int size) {
+  assert(block);
+
+  // Calculate leftover block size
+  unsigned int size_new = block->size - size;
+
+  // Ensure we can actually utilize the leftover block
+  if (size_new >= ALIGN(4 * HEADER_SIZE)) {
+
+    // Shrink original block
+    block->size = size;
+
+    // Create leftover block, coalescing if possible
+    Block* block_new = RIGHT(block);
+    block_new->size = size_new;
+    coalesce(block_new);
+  }
+
+  return;
 }
 
 void* my_malloc(size_t size) {
-  void* ptr;
+  Block* block;
 
   // Determine smallest block size
-  int b = BLOCK_BIN(HEADER_SIZE + size);
+  size = ALIGN(2 * HEADER_SIZE + size);
+  int bin = BLOCK_BIN(size);
 
-  assert(b >= 0);
-  assert(b < NUM_BINS);
-
-  // Check appropriate bins for free block
-  for (int i = b; i < NUM_BINS; i++) {
-    if (bins[i]) {
-      ptr = bins[i];
-
-      // Check if we need to shrink and chunk
-      if (i > b) {
-        bins[i]->bin = b;
-        chunk(ptr + BLOCK_SIZE(b), i - 1, b);
-      }
-      bins[i]->free = 0;
-      bins[i] = bins[i]->next;
-
-      return ptr + HEADER_SIZE;
+  // Try to reuse freed blocks
+  for (int i = bin; i < NUM_BINS; i++) {
+    block = pull(size, i);
+    if (block) {
+      shrink(block, size);
+      return DATA(block);
     }
   }
 
   // Expand heap by block size
-  ptr = mem_sbrk(BLOCK_SIZE(b));
+  block = mem_sbrk(size);
 
   // Return NULL on failure
-  if (ptr == (void*)-1) return NULL;
+  if ((void*)block == (void*)-1) return NULL;
 
   // Initialize block
-  Block* block = ptr;
-  block->bin = b;
-  block->free = 0;
-  block->next = NULL;
+  block->size = size;
+  setFree(block, 0);
 
-  last = block;
-
-  return ptr + HEADER_SIZE;
+  return DATA(block);
 }
 
 void my_free(void* ptr) {
   if (!ptr) return;
 
-  // Get block associated with pointer
-  Block* block = BLOCK(ptr);
-  
-  // Put block in bin
-  push(block, block->bin);
+  // Try to coalesce block with freed neighbors
+  coalesce(BLOCK(ptr));
+
+  return;
 }
 
 void* my_realloc(void* ptr, size_t size) {
@@ -181,40 +308,36 @@ void* my_realloc(void* ptr, size_t size) {
     return NULL;
   }
 
-  int b = BLOCK_BIN(HEADER_SIZE + size);
+  // Calculate new block size
+  unsigned int size_new = ALIGN(2 * HEADER_SIZE + size);
   Block* block = BLOCK(ptr);
 
   // No change
-  if (b == block->bin) return ptr;
+  if (size_new == block->size) return DATA(block);
 
-  // Shrink & chunk
-  if (b < block->bin) {
-    chunk((void*)block + BLOCK_SIZE(b), block->bin - 1, b);
-    block->bin = b;
-    return ptr;
+  // Shrink
+  if (size_new < block->size) {
+    shrink(block, size_new);
+    return DATA(block);
   }
 
-  // Expand
-  if (block == last) {
-    mem_sbrk(block->bin << (b - block->bin));
-    block->bin = b;
-    return ptr;
-  }
+  // TODO: expand by looking at freed neighbors
 
   // Move
   void* ptr_new = my_malloc(size);
 
+  // Return NULL if allocation failed
   if (!ptr_new) return NULL;
 
-  // Copy original data
+  // Copy original data into new block
   Block* block_new = ptr_new;
-  memcpy(block_new, block, BLOCK_SIZE(block->bin));
-  block_new->bin = b;
+  memcpy(block_new, block, block->size);
+  block_new->size = size_new;
 
   // Free old block
-  my_free(ptr);
+  my_free(DATA(block));
 
-  return ptr_new + HEADER_SIZE;
+  return DATA(block_new);
 }
 
 void my_reset_brk() {
