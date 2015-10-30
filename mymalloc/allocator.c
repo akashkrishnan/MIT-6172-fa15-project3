@@ -213,7 +213,7 @@ inline static void coalesce(Block* block) {
 
   // Try to merge right into block
   Block* right = RIGHT(block);
-  if (right->free) {
+  if ((uint64_t)right <= (uint64_t)mem_heap_hi() && right->free) {
     // Remove from bin
     extract(right);
 
@@ -223,7 +223,7 @@ inline static void coalesce(Block* block) {
 
   // Try to merge block into left
   Block* left = LEFT(block);
-  if (left->free) {
+  if ((uint64_t)left >= (uint64_t)mem_heap_lo() && left->free) {
     // Remove from bin
     extract(left);
 
