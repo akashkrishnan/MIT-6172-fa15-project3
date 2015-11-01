@@ -154,6 +154,7 @@ inline static void push(Block* block) {
   unsigned int size = block->size;
   unsigned int bin = BLOCK_BIN(size);
 
+  #ifdef SORT_BINS
   Block* curr = bins[bin];
 
   // Check if bin is empty
@@ -177,6 +178,10 @@ inline static void push(Block* block) {
   // Add to end
   setNext(block, NULL);
   setNext(curr, block);
+  #else
+  setNext(block, bins[bin]);
+  bins[bin] = block;
+  #endif
 
   return;
 }
