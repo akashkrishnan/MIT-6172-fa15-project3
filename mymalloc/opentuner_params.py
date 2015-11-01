@@ -2,6 +2,7 @@
 #
 from opentuner import ConfigurationManipulator
 from opentuner.search.manipulator import PowerOfTwoParameter
+from opentuner.search.manipulator import IntegerParameter
 
 mdriver_manipulator = ConfigurationManipulator()
 
@@ -12,4 +13,4 @@ like IntegerParameter, EnumParameter, etc.
 TODO(project3): Implement the parameters of your allocator. Once
 you have at least one other parameters, feel free to remove ALIGNMENT.
 """
-mdriver_manipulator.add_parameter(PowerOfTwoParameter('ALIGNMENT', 8, 8))
+mdriver_manipulator.add_parameter(IntegerParameter('MAX_BLOCK_POW', 2**2, 2**15))

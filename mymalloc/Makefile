@@ -64,6 +64,10 @@ all: $(TARGETS)
 pintool:
 	$(MAKE) -C pintool
 
+autotune:
+	./opentuner_run.py --test-limit=300 --no-dups --display-frequency=20 \
+	  --trace-dir=$(TRACE_DIR)
+
 mdriver: $(OBJS) $(MDRIVER_OBJS)
 	$(CC) $(PARAMS) $(LDFLAGS) $(OBJS) $(MDRIVER_OBJS) -o $@
 
