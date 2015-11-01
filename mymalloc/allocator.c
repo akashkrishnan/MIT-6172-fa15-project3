@@ -75,13 +75,17 @@ int my_check() {
   return 0;
 }
 
+char* heap_lo;
+char* heap_hi;
+
 int my_init() {
   // Empty bins
   memset(bins, 0, NUM_BINS * sizeof(Block*));
 
   // Align brk with the cache line
-  void* brk = mem_heap_hi() + 1;
-  mem_sbrk(CACHE_ALIGN((uint64_t)brk) - (uint64_t)brk);
+  //void* brk = mem_heap_hi() + 1;
+  //mem_sbrk(CACHE_ALIGN((uint64_t)brk) - (uint64_t)brk);
+  heap_lo = (char*)mem_heap_lo();
 
   return 0;
 }
@@ -90,7 +94,7 @@ const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
 const unsigned int S[] = {1, 2, 4, 8, 16};
 
 inline static unsigned int my_heap_size() {
-  return (unsigned int)((char*)my_heap_hi() - (char*)my_heap_lo());
+  return heap_hi - heap_lo;
 }
 
 inline static unsigned int BLOCK_BIN(unsigned int v) {
@@ -104,11 +108,26 @@ inline static unsigned int BLOCK_BIN(unsigned int v) {
   }
 
   if (r >= NUM_BINS) printf("r = %u\n", r);
-  //assert(r >= 0);
-  //assert(r < NUM_BINS);
 
   return r >= NUM_BINS ? NUM_BINS - 1 : r;
 }
+
+#ifdef DEBUG
+#define valid(header) __valid(header)
+inline static void __valid(Block* header) {
+  Block* footer = FOOTER(header);
+  assert((char*)header >= heap_lo);
+  assert((char*)footer + HEADER_SIZE <= heap_hi);
+  unsigned int wrong = 0;
+  wrong += (header->size != footer->size) * 100;
+  wrong += (header->free != footer->free) * 10;
+  wrong += (header->next != footer->next) * 1;
+  if (wrong) printf("wrong=%u, %p, %p\n", wrong, header->next, footer->next);
+  assert(!wrong);
+}
+#else
+#define valid(header) ;
+#endif
 
 inline static void setFree(Block* block, unsigned int free) {
   assert(block);
@@ -132,6 +151,8 @@ inline static void setSize(Block* block, unsigned int size) {
 
   // Set the footer
   FOOTER(block)->size = size;
+  FOOTER(block)->free = block->free;
+  FOOTER(block)->next = block->next;
 
   return;
 }
@@ -150,6 +171,7 @@ inline static void setNext(Block* block, Block* next) {
 
 inline static void push(Block* block) {
   assert(block);
+  valid(block);
 
   setFree(block, 1);
 
@@ -168,9 +190,12 @@ inline static void push(Block* block) {
   // Check remaining blocks
   Block* next;
   while ((next = curr->next)) {
+    valid(next);
     if (size <= next->size) {
       setNext(block, next);
       setNext(curr, block);
+      valid(block);
+      valid(next);
       return;
     }
     curr = next;
@@ -179,6 +204,9 @@ inline static void push(Block* block) {
   // Add to end
   setNext(block, NULL);
   setNext(curr, block);
+
+  valid(block);
+  valid(curr);
 
   return;
 }
@@ -193,18 +221,23 @@ inline static Block* pull(unsigned int size, unsigned int bin) {
   if (!curr) return NULL;
 
   // Check first block
+  valid(curr);
   if (curr->size >= size) {
     bins[bin] = curr->next;
     setFree(curr, 0);
+    valid(curr);
     return curr;
   }
 
   // Check remaining blocks
   Block* next;
   while ((next = curr->next)) {
+    valid(next);
     if (next->size >= size) {
       setNext(curr, next->next);
       setFree(next, 0);
+      valid(curr);
+      valid(next);
       return next;
     }
     curr = next;
@@ -215,6 +248,9 @@ inline static Block* pull(unsigned int size, unsigned int bin) {
 
 inline static void extract(Block* block) {
   assert(block);
+  valid(block);
+
+  setFree(block, 0);
 
   unsigned int size = block->size;
   unsigned int bin = BLOCK_BIN(size);
@@ -225,6 +261,7 @@ inline static void extract(Block* block) {
   if (!curr) return;
 
   // Check first block
+  valid(curr);
   if (curr == block) {
     bins[bin] = curr->next;
     return;
@@ -233,8 +270,10 @@ inline static void extract(Block* block) {
   // Check remaining blocks
   Block* next;
   while ((next = curr->next)) {
+    valid(next);
     if (next == block) {
       setNext(curr, next->next);
+      valid(curr);
       return;
     }
     curr = next;
@@ -243,23 +282,13 @@ inline static void extract(Block* block) {
   return;
 }
 
-inline static void valid(Block* header) {
-  Block* footer = FOOTER(header);
-  unsigned int wrong = 0;
-  wrong += header->size != footer->size;
-  wrong += (header->next != footer->next) << 1;
-  wrong += (header->free != footer->free) << 2;
-  if (wrong) printf("wrong=%u\n", wrong);
-  assert(!wrong);
-}
-
 inline static void coalesce(Block* block) {
   assert(block);
   valid(block);
 
   // Try to merge right into block
   Block* right = RIGHT(block);
-  if (((char*)right < (char*)mem_heap_hi()) && right->free) {
+  if ((char*)FOOTER(block) + HEADER_SIZE < heap_hi && right->free) {
     // Remove from bin
     extract(right);
 
@@ -269,7 +298,7 @@ inline static void coalesce(Block* block) {
 
   // Try to merge block into left
   Block* left = LEFT(block);
-  if ((char*)left >= (char*)mem_heap_lo() && left->free) {
+  if ((char*)block > heap_lo && left->free) {
     // Remove from bin
     extract(left);
 
@@ -287,6 +316,7 @@ inline static void coalesce(Block* block) {
 
 inline static void shrink(Block* block, unsigned int size) {
   assert(block);
+  valid(block);
   assert(size <= block->size);
 
   // Calculate leftover block size
@@ -296,11 +326,13 @@ inline static void shrink(Block* block, unsigned int size) {
   if (size_new >= ALIGN(4 * HEADER_SIZE)) {
 
     // Shrink original block
-    setSize(block, size); //|---------------------|-----|---------------|-----------|
+    setSize(block, size);
 
     // Create leftover block, coalescing if possible
     Block* block_new = RIGHT(block);
     setSize(block_new, size_new);
+    setNext(block_new, NULL);
+    setFree(block_new, 1);
     coalesce(block_new);
   }
 
@@ -318,7 +350,7 @@ void* my_malloc(size_t size) {
   for (int i = bin; i < NUM_BINS; i++) {
     block = pull(size, i);
     if (block) {
-      //shrink(block, size);
+      shrink(block, size);
       valid(block);
       return DATA(block);
     }
@@ -326,12 +358,14 @@ void* my_malloc(size_t size) {
 
   // Expand heap by block size
   block = mem_sbrk(size);
+  heap_hi = (char*)block + size;
 
   // Return NULL on failure
   if ((void*)block == (void*)-1) return NULL;
 
   // Initialize block
   setSize(block, size);
+  setNext(block, NULL);
   setFree(block, 0);
 
   valid(block);
@@ -340,7 +374,7 @@ void* my_malloc(size_t size) {
 }
 
 inline static unsigned int inside_heap(void* ptr) {
-  return my_heap_lo() <= ptr && ptr <= my_heap_hi();
+  return heap_lo <= (char*)ptr && (char*)ptr < heap_hi;
 }
 
 void my_free(void* ptr) {
@@ -352,8 +386,8 @@ void my_free(void* ptr) {
   Block* block = BLOCK(ptr);
 
   // Try to coalesce block with freed neighbors
-  valid(block);
   if (!block->free) {
+    valid(block);
     setFree(block, 1);
     coalesce(block);
   }
@@ -376,13 +410,14 @@ void* my_realloc(void* ptr, size_t size) {
   // Calculate new block size
   unsigned int size_new = ALIGN(2 * HEADER_SIZE + size);
   Block* block = BLOCK(ptr);
+  valid(block);
 
   // No change
   if (size_new == block->size) return ptr;
 
   // Shrink
   if (size_new < block->size) {
-    //shrink(block, size_new);
+    shrink(block, size_new);
     return ptr;
   }
 
@@ -409,10 +444,10 @@ void my_reset_brk() {
 }
 
 void* my_heap_lo() {
-  return mem_heap_lo();
+  return heap_lo;
 }
 
 void* my_heap_hi() {
-  return mem_heap_hi();
+  return heap_hi;
 }
 
