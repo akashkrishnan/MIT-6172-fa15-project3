@@ -54,6 +54,7 @@
 
 #define MIN_BLOCK_POW 5
 #define MAX_BLOCK_POW 29
+#define SHRINK_MIN_SIZE 64
 
 #define NUM_BINS (MAX_BLOCK_POW - MIN_BLOCK_POW)
 #define BLOCK(ptr) ((Block*)((char*)ptr - HEADER_SIZE))
@@ -65,7 +66,7 @@
 typedef struct Block {
   unsigned int size : 31; // The size of this block, including the header, data, footer
   unsigned int free : 1;  // Whether or not this block is free
-  struct Block* next;     // Pointer to next Block
+  struct Block* next;     // Pointer to next block
 } Block;
 
 typedef struct Footer {
@@ -120,14 +121,6 @@ inline static unsigned int BLOCK_BIN(unsigned int v) {
   return r;
 }
 
-inline static void setFree(Block* block, unsigned int free) {
-  assert(block);
-
-  block->free = free;
-
-  return;
-}
-
 inline static void setSize(Block* block, unsigned int size) {
   assert(block);
   assert(size <= heap_hi - heap_lo);
@@ -138,18 +131,10 @@ inline static void setSize(Block* block, unsigned int size) {
   return;
 }
 
-inline static void setNext(Block* block, Block* next) {
-  assert(block);
-
-  block->next = next;
-
-  return;
-}
-
 inline static void push(Block* block) {
   assert(block);
 
-  setFree(block, 1);
+  block->free = 1;
 
   unsigned int size = block->size;
   unsigned int bin = BLOCK_BIN(size);
@@ -159,7 +144,7 @@ inline static void push(Block* block) {
 
   // Check if bin is empty
   if (!curr || size <= curr->size) {
-    setNext(block, curr);
+    block->next = curr;
     bins[bin] = block;
     return;
   }
@@ -168,18 +153,18 @@ inline static void push(Block* block) {
   Block* next;
   while ((next = curr->next)) {
     if (size <= next->size) {
-      setNext(block, next);
-      setNext(curr, block);
+      block->next = next;
+      curr->next = block;
       return;
     }
     curr = next;
   }
 
   // Add to end
-  setNext(block, NULL);
-  setNext(curr, block);
+  block->next = NULL;
+  curr->next = block;
   #else
-  setNext(block, bins[bin]);
+  block->next = bins[bin];
   bins[bin] = block;
   #endif
 
@@ -198,7 +183,7 @@ inline static Block* pull(unsigned int size, unsigned int bin) {
   // Check first block
   if (curr->size >= size) {
     bins[bin] = curr->next;
-    setFree(curr, 0);
+    curr->free = 0;
     return curr;
   }
 
@@ -206,8 +191,8 @@ inline static Block* pull(unsigned int size, unsigned int bin) {
   Block* next;
   while ((next = curr->next)) {
     if (next->size >= size) {
-      setNext(curr, next->next);
-      setFree(next, 0);
+      curr->next = next->next;
+      next->free = 0;
       return next;
     }
     curr = next;
@@ -228,7 +213,7 @@ inline static void extract(Block* block) {
 
   // Check first block
   if (curr == block) {
-    bins[bin] = curr->next;
+    bins[bin] = block->next;
     return;
   }
 
@@ -236,7 +221,7 @@ inline static void extract(Block* block) {
   Block* next;
   while ((next = curr->next)) {
     if (next == block) {
-      setNext(curr, next->next);
+      curr->next = next->next;
       return;
     }
     curr = next;
@@ -284,7 +269,7 @@ inline static void shrink(Block* block, unsigned int size) {
   unsigned int size_new = block->size - size;
 
   // Ensure we can actually utilize the leftover block
-  if (size_new >= ALIGN(4 * HEADER_SIZE)) {
+  if (size_new >= ALIGN(SHRINK_MIN_SIZE)) {
 
     // Shrink original block
     setSize(block, size);
@@ -296,6 +281,7 @@ inline static void shrink(Block* block, unsigned int size) {
   }
 
   return;
+
 }
 
 void* my_malloc(size_t size) {
@@ -322,8 +308,7 @@ void* my_malloc(size_t size) {
 
   // Initialize block
   setSize(block, size);
-  setFree(block, 0);
-  //setNext(block, NULL);
+  block->free = 0;
 
   return DATA(block);
 }
