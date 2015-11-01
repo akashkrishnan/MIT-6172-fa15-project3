@@ -391,10 +391,15 @@ void* my_realloc(void* ptr, size_t size) {
     return ptr;
   }
 
-  // Expand by looking at freed neighbors
-  //if ((char*)right < heap_hi) {
-  //  return ptr;
-  //}
+  // Expand if large enough free neighbor
+  #ifdef EXPAND_INTO_FREE_NEIGHBOR
+  if ((char*)right < heap_hi && right->free && right->size >= diff) {
+    extract(right);
+    setSize(block, block->size + right->size);
+    shrink(block, size_new);
+    return ptr;
+  }
+  #endif
 
   // Move
   void* ptr_new = my_malloc(size);
