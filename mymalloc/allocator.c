@@ -58,10 +58,9 @@
 #define NUM_BINS (MAX_BLOCK_POW - MIN_BLOCK_POW)
 #define BLOCK(ptr) ((Block*)((char*)ptr - HEADER_SIZE))
 #define DATA(ptr) ((void*)((char*)ptr + HEADER_SIZE))
-#define BIN(block) (bins[block->bin])
-#define LEFT(block) ((Block*)((char*)block - (block - 1)->size))
+#define LEFT(block) ((Block*)((char*)block - ((Footer*)block - 1)->size))
 #define RIGHT(block) ((Block*)((char*)block + block->size))
-#define FOOTER(block) (RIGHT(block) - 1)
+#define FOOTER(block) ((Footer*)RIGHT(block) - 1)
 
 typedef struct Block {
   unsigned int size : 31; // The size of this block, including the header, data, footer
@@ -84,19 +83,12 @@ char* heap_hi;
 
 #ifdef DEBUG
 #define valid(header) __valid(header)
-
 inline static void __valid(Block* header) {
-  Block* footer = FOOTER(header);
+  Footer* footer = FOOTER(header);
   assert((char*)header >= heap_lo);
-  assert((char*)footer + HEADER_SIZE <= heap_hi);
-  unsigned int wrong = 0;
-  wrong += (header->size != footer->size) * 100;
-  wrong += (header->free != footer->free) * 10;
-  wrong += (header->next != footer->next) * 1;
-  if (wrong) printf("wrong=%u, %p, %p\n", wrong, header->next, footer->next);
-  assert(!wrong);
+  assert((char*)footer + FOOTER_SIZE <= heap_hi);
+  assert(header->size == footer->size);
 }
-
 #else
 #define valid(header) ;
 #endif
@@ -131,11 +123,7 @@ inline static unsigned int BLOCK_BIN(unsigned int v) {
 inline static void setFree(Block* block, unsigned int free) {
   assert(block);
 
-  // Set the header
   block->free = free;
-
-  // Set the foooter
-  FOOTER(block)->free = free;
 
   return;
 }
@@ -144,13 +132,8 @@ inline static void setSize(Block* block, unsigned int size) {
   assert(block);
   assert(size <= heap_hi - heap_lo);
 
-  // Set the header
   block->size = size;
-
-  // Set the footer
   FOOTER(block)->size = size;
-  FOOTER(block)->free = block->free;
-  FOOTER(block)->next = block->next;
 
   return;
 }
@@ -158,11 +141,7 @@ inline static void setSize(Block* block, unsigned int size) {
 inline static void setNext(Block* block, Block* next) {
   assert(block);
 
-  // Set the header
   block->next = next;
-
-  // Set the footer
-  FOOTER(block)->next = next;
 
   return;
 }
@@ -235,10 +214,7 @@ inline static Block* pull(unsigned int size, unsigned int bin) {
 inline static void extract(Block* block) {
   assert(block);
 
-  //setFree(block, 0);
-
-  unsigned int size = block->size;
-  unsigned int bin = BLOCK_BIN(size);
+  unsigned int bin = BLOCK_BIN(block->size);
 
   Block* curr = bins[bin];
 
@@ -321,7 +297,7 @@ void* my_malloc(size_t size) {
   Block* block;
 
   // Determine smallest block size
-  size = ALIGN(2 * HEADER_SIZE + size);
+  size = ALIGN(HEADER_SIZE + size + FOOTER_SIZE);
 
   // Try to reuse freed blocks
   for (int bin = BLOCK_BIN(size); bin < NUM_BINS; bin++) {
@@ -367,7 +343,7 @@ void* my_realloc(void* ptr, size_t size) {
   }
 
   // Calculate new block size
-  unsigned int size_new = ALIGN(2 * HEADER_SIZE + size);
+  unsigned int size_new = ALIGN(HEADER_SIZE + size + FOOTER_SIZE);
 
   Block* block = BLOCK(ptr);
 
@@ -408,7 +384,7 @@ void* my_realloc(void* ptr, size_t size) {
   if (!ptr_new) return NULL;
 
   // Copy original data into new block
-  memcpy(ptr_new, ptr, block->size - 2 * HEADER_SIZE);
+  memcpy(ptr_new, ptr, block->size - HEADER_SIZE - FOOTER_SIZE);
 
   // Free old block
   my_free(ptr);
