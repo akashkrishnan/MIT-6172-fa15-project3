@@ -66,6 +66,7 @@
 typedef struct Block {
   unsigned int size : 31; // The size of this block, including the header, data, footer
   unsigned int free : 1;  // Whether or not this block is free
+  struct Block* prev;     // Pointer to previous block
   struct Block* next;     // Pointer to next block
 } Block;
 
@@ -139,34 +140,10 @@ inline static void push(Block* block) {
   unsigned int size = block->size;
   unsigned int bin = BLOCK_BIN(size);
 
-  #ifdef SORT_BINS
-  Block* curr = bins[bin];
-
-  // Check if bin is empty
-  if (!curr || size <= curr->size) {
-    block->next = curr;
-    bins[bin] = block;
-    return;
-  }
-
-  // Check remaining blocks
-  Block* next;
-  while ((next = curr->next)) {
-    if (size <= next->size) {
-      block->next = next;
-      curr->next = block;
-      return;
-    }
-    curr = next;
-  }
-
-  // Add to end
-  block->next = NULL;
-  curr->next = block;
-  #else
+  block->prev = NULL;
+  if (bins[bin]) bins[bin]->prev = block;
   block->next = bins[bin];
   bins[bin] = block;
-  #endif
 
   return;
 }
@@ -183,6 +160,7 @@ inline static Block* pull(unsigned int size, unsigned int bin) {
   // Check first block
   if (curr->size >= size) {
     bins[bin] = curr->next;
+    if (bins[bin]) bins[bin]->prev = NULL;
     curr->free = 0;
     return curr;
   }
@@ -192,6 +170,7 @@ inline static Block* pull(unsigned int size, unsigned int bin) {
   while ((next = curr->next)) {
     if (next->size >= size) {
       curr->next = next->next;
+      if (curr->next) curr->next->prev = curr;
       next->free = 0;
       return next;
     }
@@ -206,26 +185,14 @@ inline static void extract(Block* block) {
 
   unsigned int bin = BLOCK_BIN(block->size);
 
-  Block* curr = bins[bin];
-
-  // Check if bin is empty
-  if (!curr) return;
-
-  // Check first block
-  if (curr == block) {
-    bins[bin] = block->next;
+  if (block->prev) {
+    block->prev->next = block->next;
+    if (block->next) block->next->prev = block->prev;
     return;
   }
 
-  // Check remaining blocks
-  Block* next;
-  while ((next = curr->next)) {
-    if (next == block) {
-      curr->next = next->next;
-      return;
-    }
-    curr = next;
-  }
+  bins[bin] = block->next;
+  if (block->next) block->next->prev = NULL;
 
   return;
 }
