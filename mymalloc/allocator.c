@@ -92,8 +92,6 @@ static uint64_t BLOCK_BIN(uint64_t v) {
 typedef struct Block {
   unsigned int size : 31; // The size of this block, including the header, data, footer
   unsigned int free : 1;  // Whether or not this block is free
-  //struct Block* prev;     // Pointer to previous block
-  //struct Block* next;     // Pointer to next block
 } Block;
 
 typedef struct Links {
@@ -102,7 +100,7 @@ typedef struct Links {
 } Links;
 
 typedef struct Footer {
-  unsigned int size : 31;  // The size of this block; same value as that in the header
+  unsigned int size;       // The size of this block; same value as that in the header
 } Footer;
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -300,12 +298,6 @@ int my_init() {
 
   // set the initial boundaries of the heap
   heap_lo = heap_hi = (uint8_t*)mem_sbrk(size) + size;
-
-#ifdef DEBUG
-  //printf("HEADER size: %zu\n", HEADER_SIZE);
-  //printf("FOOTER size: %zu\n", FOOTER_SIZE);
-  //printf("LINKS size: %zu\n", LINKS_SIZE);
-#endif
 
   return 0;
 }
