@@ -202,14 +202,13 @@ int eval_mm_valid(const malloc_impl_t *impl, trace_t *trace, int tracenum) {
         // and then fill in the new block with new data that you can use to
         // verify the block was copied if it is resized again.
         oldsize = trace->block_sizes[index];
-        if (size < oldsize)
-          oldsize = size;
+        if (size < oldsize) oldsize = size;
         for (int j = 0; j < size; j++) {
           if (j < oldsize) {
             if ((uint8_t)newp[j] != (uint8_t)j) {
               malloc_error(tracenum, i, "realloc incorrect");
               return 0;
-            } 
+            }
           } else {
             newp[j] = (uint8_t)j;
           }

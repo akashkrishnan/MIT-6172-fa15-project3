@@ -64,14 +64,14 @@
 #define FOOTER(block) ((Footer*)RIGHT(block) - 1)
 
 typedef struct Block {
-  unsigned int size : 31; // The size of this block, including the header, data, footer
-  unsigned int free : 1;  // Whether or not this block is free
-  struct Block* prev;     // Pointer to previous block
-  struct Block* next;     // Pointer to next block
+  unsigned int size : 31;  // The size of this block, including the header, data, footer
+  unsigned int free : 1;   // Whether or not this block is free
+  struct Block* prev;      // Pointer to previous block
+  struct Block* next;      // Pointer to next block
 } Block;
 
 typedef struct Footer {
-  unsigned int size; // The size of this block; same value as that in the header
+  unsigned int size;       // The size of this block; same value as that in the header
 } Footer;
 
 Block* bins[NUM_BINS];
@@ -92,7 +92,7 @@ inline static void __valid(Block* header) {
   assert(header->size == footer->size);
 }
 #else
-#define valid(header) ;
+#define valid(header) ()
 #endif
 
 int my_init() {
@@ -237,7 +237,6 @@ inline static void shrink(Block* block, unsigned int size) {
 
   // Ensure we can actually utilize the leftover block
   if (size_new >= ALIGN(SHRINK_MIN_SIZE)) {
-
     // Shrink original block
     setSize(block, size);
 
@@ -248,7 +247,6 @@ inline static void shrink(Block* block, unsigned int size) {
   }
 
   return;
-
 }
 
 void* my_malloc(size_t size) {
