@@ -48,6 +48,7 @@
 #define CACHE_ALIGN(size) (((size) + (CACHE_LINE_SIZE-1)) & ~(CACHE_LINE_SIZE-1))
 
 /////////////////////////////////////////////////////////////////////////////////
+// macros, helper functions
 
 #define HEADER_SIZE ALIGN((sizeof(Block)))
 #define FOOTER_SIZE (sizeof(Footer))
@@ -73,12 +74,12 @@
 #define UNDER_HI(ptr) ((uint8_t*)(ptr) < (uint8_t*)heap_hi)
 #define OVER_LO(ptr) ((uint8_t*)(ptr) > (uint8_t*)heap_lo)
 
-const uint64_t b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
-const uint64_t S[] = {1, 2, 4, 8, 16};
+static const uint32_t b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
+static const uint32_t S[] = {1, 2, 4, 8, 16};
 
-static uint64_t BLOCK_BIN(uint64_t v) {
+inline static uint32_t BLOCK_BIN(uint32_t v) {
   v >>= MIN_BLOCK_POW;
-  register unsigned int r = 0;
+  register uint32_t r = 0;
   for (int i = 4; i >= 0; i--) {
     if (v & b[i]) {
       v >>= S[i];
@@ -89,9 +90,11 @@ static uint64_t BLOCK_BIN(uint64_t v) {
 }
 
 /////////////////////////////////////////////////////////////////////////////////
+// types:
 typedef struct Block {
-  unsigned int size : 31; // The size of this block, including the header, data, footer
-  unsigned int free : 1;  // Whether or not this block is free
+  unsigned int size : 31;   // The size of this block
+                            // including the header, data, footer
+  unsigned int free : 1;    // Whether or not this block is free
 } Block;
 
 typedef struct Links {
@@ -100,12 +103,14 @@ typedef struct Links {
 } Links;
 
 typedef struct Footer {
-  unsigned int size;       // The size of this block; same value as that in the header
+  unsigned int size;    // The size of this block
+                        // same value as that in the header
 } Footer;
 
 /////////////////////////////////////////////////////////////////////////////////
+// static functions:
 static void Block_init(Block* block, uint32_t size);
-static uint64_t BLOCK_BIN(uint64_t v);
+static uint32_t BLOCK_BIN(uint32_t v);
 static void Block_set_size(Block* block, uint32_t size);
 static void push(Block* block);
 static Block* pull(uint32_t size, uint32_t bin);
@@ -130,7 +135,7 @@ inline static void __valid(Block* header) {
   assert(header->size == footer->size);
 }
 #else
-#define valid(header) ;
+#define valid(header);
 #endif
 
 // initialize the block: set the header and footer to the specified size
@@ -142,7 +147,6 @@ inline static void Block_init(Block* block, uint32_t size) {
   FOOTER(block)->size = size;
 
   block->free = 0;
-  return;
 }
 
 inline static void Block_set_size(Block* block, uint32_t size) {
@@ -151,7 +155,6 @@ inline static void Block_set_size(Block* block, uint32_t size) {
 
   block->size = size;
   FOOTER(block)->size = size;
-  return;
 }
 
 static void push(Block* block) {
@@ -169,7 +172,6 @@ static void push(Block* block) {
 
   block_links->next = bins[bin];
   bins[bin] = block;
-  return;
 }
 
 static Block* pull(uint32_t size, uint32_t bin) {
@@ -224,7 +226,7 @@ static void extract(Block* block) {
 
   if (block_links->prev) {
     LINKS(block_links->prev)->next = block_links->next;
-    if (block_links->next) 
+    if (block_links->next)
       LINKS(block_links->next)->prev = block_links->prev;
     return;
   }
@@ -232,7 +234,6 @@ static void extract(Block* block) {
   bins[bin] = block_links->next;
   if (block_links->next)
     LINKS(block_links->next)->prev = NULL;
-  return;
 }
 
 static void coalesce(Block* block) {
@@ -307,7 +308,6 @@ void* my_malloc(size_t size) {
   Block* block;
 
   // Determine smallest block size
-  //size = align(header_size + size + footer_size);
   if (size < LINKS_SIZE) {
     size = LINKS_SIZE;
   }
@@ -317,7 +317,6 @@ void* my_malloc(size_t size) {
 
   // Try to reuse freed blocks
   for (int bin = BLOCK_BIN(size); bin < NUM_BINS; bin++) {
-
     block = pull(size, bin);
 
     if (block) {
