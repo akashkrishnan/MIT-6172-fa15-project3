@@ -74,19 +74,8 @@
 #define UNDER_HI(ptr) ((uint8_t*)(ptr) < (uint8_t*)heap_hi)
 #define OVER_LO(ptr) ((uint8_t*)(ptr) > (uint8_t*)heap_lo)
 
-static const uint32_t b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
-static const uint32_t S[] = {1, 2, 4, 8, 16};
-
-inline static uint32_t BLOCK_BIN(uint32_t v) {
-  v >>= MIN_BLOCK_POW;
-  register uint32_t r = 0;
-  for (int i = 4; i >= 0; i--) {
-    if (v & b[i]) {
-      v >>= S[i];
-      r |= S[i];
-    }
-  }
-  return r;
+inline static uint32_t BLOCK_BIN(uint32_t size) {
+  return 32 - __builtin_clz((size) >> MIN_BLOCK_POW);
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -110,7 +99,7 @@ typedef struct Footer {
 /////////////////////////////////////////////////////////////////////////////////
 // static functions:
 static void Block_init(Block* block, uint32_t size);
-static uint32_t BLOCK_BIN(uint32_t v);
+static uint32_t BLOCK_BIN(uint32_t size);
 static void Block_set_size(Block* block, uint32_t size);
 static void push(Block* block);
 static Block* pull(uint32_t size, uint32_t bin);
