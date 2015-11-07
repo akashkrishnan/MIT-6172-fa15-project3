@@ -50,24 +50,17 @@
 /////////////////////////////////////////////////////////////////////////////////
 // macros, helper functions
 
-#define HEADER_SIZE ALIGN((sizeof(Block)))
+#define HEADER_SIZE 8
+#define MIN_DATA_SIZE 16
 #define FOOTER_SIZE (sizeof(Footer))
-#define LINKS_SIZE (sizeof(Links))
 
 #define MIN_BLOCK_POW 5
-
-#ifndef MAX_BLOCK_POW
 #define MAX_BLOCK_POW 29
-#endif
-
-#ifndef SHRINK_MIN_SIZE
 #define SHRINK_MIN_SIZE 64
-#endif
 
 #define NUM_BINS (MAX_BLOCK_POW - MIN_BLOCK_POW)
 #define BLOCK(ptr) ((Block*)((uint8_t*)(ptr) - HEADER_SIZE))
 #define DATA(ptr) ((void*)((uint8_t*)(ptr) + HEADER_SIZE))
-#define LINKS(ptr) ((Links*)((uint8_t*)(ptr) + HEADER_SIZE))
 #define FOOTER(block) (((Footer*)(RIGHT(block))) - 1)
 #define LEFT(block) ((Block*)((uint8_t*)(block) - ((Footer*)(block) - 1)->size))
 #define RIGHT(block) ((Block*)((uint8_t*)(block) + (block)->size))
@@ -84,12 +77,9 @@ typedef struct Block {
   unsigned int size : 31;   // The size of this block
                             // including the header, data, footer
   unsigned int free : 1;    // Whether or not this block is free
-} Block;
-
-typedef struct Links {
-  struct Block* next;
   struct Block* prev;
-} Links;
+  struct Block* next;
+} Block;
 
 typedef struct Footer {
   unsigned int size;    // The size of this block
@@ -98,8 +88,8 @@ typedef struct Footer {
 
 /////////////////////////////////////////////////////////////////////////////////
 // static functions:
-static void Block_init(Block* block, uint32_t size);
 static uint32_t BLOCK_BIN(uint32_t size);
+static void Block_init(Block* block, uint32_t size);
 static void Block_set_size(Block* block, uint32_t size);
 static void push(Block* block);
 static Block* pull(uint32_t size, uint32_t bin);
@@ -134,6 +124,8 @@ inline static void Block_init(Block* block, uint32_t size) {
 
   Block_set_size(block, size);
   block->free = 0;
+
+  return;
 }
 
 inline static void Block_set_size(Block* block, uint32_t size) {
@@ -142,23 +134,24 @@ inline static void Block_set_size(Block* block, uint32_t size) {
 
   block->size = size;
   FOOTER(block)->size = size;
+
+  return;
 }
 
 static void push(Block* block) {
   assert(block);
+  valid(block);
 
   uint32_t bin = BLOCK_BIN(block->size);
 
-  Links* block_links = LINKS(block);
-  Links* bin_head_links = LINKS(bins[bin]);
-
   block->free = 1;
-  block_links->prev = NULL;
-
-  if (bins[bin]) bin_head_links->prev = block;
-
-  block_links->next = bins[bin];
+  block->prev = NULL;
+  block->next = bins[bin];
+  if (bins[bin]) bins[bin]->prev = block;
   bins[bin] = block;
+
+  valid(block);
+  return;
 }
 
 static Block* pull(uint32_t size, uint32_t bin) {
@@ -172,56 +165,43 @@ static Block* pull(uint32_t size, uint32_t bin) {
 
   // Check first block
   if (curr->size >= size) {
-    bins[bin] = LINKS(curr)->next;
-
-    if (bins[bin]) LINKS(bins[bin])->prev = NULL;
-
-    curr->free = 0;
-    valid(curr);
+    bins[bin] = curr->next;
+    if (curr->next) curr->next->prev = NULL;
     return curr;
   }
 
   // Check remaining blocks
   Block* next;
-
-  while ((next = LINKS(curr)->next)) {
+  while ((next = curr->next)) {
     if (next->size >= size) {
-      Links* curr_links = LINKS(curr);
-      Links* next_links = LINKS(next);
-
-      if (next_links->next >= (Block*)heap_hi) {
-        curr_links->next = NULL;
-        next_links->next = NULL;
-      } else {
-        curr_links->next = next_links->next;
-      }
-
-      if (curr_links->next) LINKS(curr_links->next)->prev = curr;
-      next->free = 0;
+      curr->next = next->next;
+      if (curr->next) curr->next->prev = curr;
       return next;
     }
     curr = next;
   }
+
   return NULL;
 }
 
 static void extract(Block* block) {
+  assert(block);
   valid(block);
 
-  uint32_t bin = BLOCK_BIN(block->size);
-  Links* block_links = LINKS(block);
-
-  if (block_links->prev) {
-    LINKS(block_links->prev)->next = block_links->next;
-    if (block_links->next) LINKS(block_links->next)->prev = block_links->prev;
+  if (block->prev) {
+    block->prev->next = block->next;
+    if (block->next) block->next->prev = block->prev;
     return;
   }
 
-  bins[bin] = block_links->next;
-  if (block_links->next) LINKS(block_links->next)->prev = NULL;
+  uint32_t bin = BLOCK_BIN(block->size);
+  bins[bin] = block->next;
+  if (block->next) block->next->prev = NULL;
+  return;
 }
 
 static void coalesce(Block* block) {
+  assert(block);
   valid(block);
 
   // Try to merge right into block
@@ -236,13 +216,13 @@ static void coalesce(Block* block) {
 
   // Try to merge block into left
   Block* left = LEFT(block);
-  valid(left);
-
   if (OVER_LO(left) && left->free) {
     // Remove from bin
     extract(left);
+
     // Expand left
     Block_set_size(left, left->size + block->size);
+
     // Push left into bin
     push(left);
   } else {
@@ -251,6 +231,7 @@ static void coalesce(Block* block) {
 }
 
 static void shrink(Block* block, uint32_t size) {
+  assert(block);
   assert(size <= block->size);
   valid(block);
 
@@ -293,8 +274,8 @@ void* my_malloc(size_t size) {
   Block* block;
 
   // Determine smallest block size
-  if (size < LINKS_SIZE) {
-    size = LINKS_SIZE;
+  if (size < MIN_DATA_SIZE) {
+    size = MIN_DATA_SIZE;
   }
 
   size = ALIGN(HEADER_SIZE + size + FOOTER_SIZE);
@@ -305,6 +286,7 @@ void* my_malloc(size_t size) {
     for (int bin = BLOCK_BIN(size); bin < NUM_BINS; bin++) {
       block = pull(size, bin);
       if (block) {
+        block->free = 0;
         shrink(block, size);
         return DATA(block);
       }
@@ -313,12 +295,14 @@ void* my_malloc(size_t size) {
     // Check if last block can be extended
     Block* last = LEFT((Block*)heap_hi);
     if (last->free) {
+      // Determine amount to expand/extend
       uint32_t diff = size - last->size;
 
       // Expand heap
       mem_sbrk(diff);
       heap_hi += diff;
 
+      // Extend block
       extract(last);
       Block_init(last, size);
 
@@ -340,9 +324,8 @@ void* my_malloc(size_t size) {
 }
 
 void my_free(void* ptr) {
-  valid(BLOCK(ptr));
-
   if (!ptr) return;
+  valid(BLOCK(ptr));
 
   // Try to coalesce block with freed neighbors
   coalesce(BLOCK(ptr));
