@@ -65,12 +65,12 @@
 #endif
 
 #define NUM_BINS (MAX_BLOCK_POW - MIN_BLOCK_POW)
-#define BLOCK(ptr) ((Block*)((uint8_t*)ptr - HEADER_SIZE))
-#define DATA(ptr) ((void*)((uint8_t*)ptr + HEADER_SIZE))
+#define BLOCK(ptr) ((Block*)((uint8_t*)(ptr) - HEADER_SIZE))
+#define DATA(ptr) ((void*)((uint8_t*)(ptr) + HEADER_SIZE))
 #define LINKS(ptr) ((Links*)((uint8_t*)(ptr) + HEADER_SIZE))
 #define FOOTER(block) (((Footer*)(RIGHT(block))) - 1)
-#define LEFT(block) ((Block*)((uint8_t*)block - ((Footer*)block - 1)->size))
-#define RIGHT(block) ((Block*)((uint8_t*)block + ((Block*)(block))->size))
+#define LEFT(block) ((Block*)((uint8_t*)(block) - ((Footer*)(block) - 1)->size))
+#define RIGHT(block) ((Block*)((uint8_t*)(block) + (block)->size))
 #define UNDER_HI(ptr) ((uint8_t*)(ptr) < (uint8_t*)heap_hi)
 #define OVER_LO(ptr) ((uint8_t*)(ptr) > (uint8_t*)heap_lo)
 
