@@ -132,9 +132,7 @@ inline static void Block_init(Block* block, uint32_t size) {
   assert(block);
   assert(size <= (heap_hi - heap_lo));
 
-  block->size = size;
-  FOOTER(block)->size = size;
-
+  Block_set_size(block, size);
   block->free = 0;
 }
 
@@ -215,14 +213,12 @@ static void extract(Block* block) {
 
   if (block_links->prev) {
     LINKS(block_links->prev)->next = block_links->next;
-    if (block_links->next)
-      LINKS(block_links->next)->prev = block_links->prev;
+    if (block_links->next) LINKS(block_links->next)->prev = block_links->prev;
     return;
   }
 
   bins[bin] = block_links->next;
-  if (block_links->next)
-    LINKS(block_links->next)->prev = NULL;
+  if (block_links->next) LINKS(block_links->next)->prev = NULL;
 }
 
 static void coalesce(Block* block) {
@@ -301,22 +297,38 @@ void* my_malloc(size_t size) {
     size = LINKS_SIZE;
   }
 
-  assert(LINKS_SIZE <= size);
   size = ALIGN(HEADER_SIZE + size + FOOTER_SIZE);
 
-  // Try to reuse freed blocks
-  for (int bin = BLOCK_BIN(size); bin < NUM_BINS; bin++) {
-    block = pull(size, bin);
+  if (heap_lo != heap_hi) {
 
-    if (block) {
-      shrink(block, size);
-      return DATA(block);
+    // Try to reuse freed blocks
+    for (int bin = BLOCK_BIN(size); bin < NUM_BINS; bin++) {
+      block = pull(size, bin);
+      if (block) {
+        shrink(block, size);
+        return DATA(block);
+      }
+    }
+
+    // Check if last block can be extended
+    Block* last = LEFT((Block*)heap_hi);
+    if (last->free) {
+      uint32_t diff = size - last->size;
+
+      // Expand heap
+      mem_sbrk(diff);
+      heap_hi += diff;
+
+      extract(last);
+      Block_init(last, size);
+
+      return DATA(last);
     }
   }
 
   // Expand heap by block size
   block = mem_sbrk(size);
-  heap_hi = (uint8_t*)block + size;
+  heap_hi += size;
 
   // Return NULL on failure
   if ((void*)block == (void*)-1) return NULL;
